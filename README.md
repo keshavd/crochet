@@ -20,7 +20,7 @@ graph.
 ## Installation
 
 ```bash
-pip install crochet
+pip install crochet-migration
 ```
 
 For development:
