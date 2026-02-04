@@ -71,5 +71,33 @@ class IngestError(CrochetError):
     """Raised for data ingest issues."""
 
 
+class RemoteFetchError(IngestError):
+    """Raised when a remote file cannot be fetched."""
+
+
+class ChecksumMismatchError(IngestError):
+    """Raised when a downloaded file's checksum doesn't match the expected value."""
+
+    def __init__(self, uri: str, expected: str, actual: str):
+        super().__init__(
+            f"Checksum mismatch for '{uri}': expected {expected}, got {actual}"
+        )
+        self.uri = uri
+        self.expected = expected
+        self.actual = actual
+
+
+class ValidationError(IngestError):
+    """Raised when data validation fails."""
+
+    def __init__(self, result: object):
+        self.result = result
+        errors = getattr(result, "errors", [])
+        count = len(errors)
+        first_few = "; ".join(str(e) for e in errors[:3])
+        suffix = f" (and {count - 3} more)" if count > 3 else ""
+        super().__init__(f"Validation failed with {count} error(s): {first_few}{suffix}")
+
+
 class VerificationError(CrochetError):
     """Raised when verification checks fail."""

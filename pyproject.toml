@@ -32,11 +32,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+data = [
+    "pyarrow>=14.0",
+]
+s3 = [
+    "boto3>=1.28",
+]
+gcs = [
+    "google-cloud-storage>=2.0",
+]
+all = [
+    "crochet-migration[data,s3,gcs]",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
     "ruff",
     "mypy",
+    "pyarrow>=14.0",
 ]
 
 [project.urls]

@@ -51,6 +51,39 @@ class IngestTracker:
             record_count=record_count,
         )
 
+    def register_remote_batch(
+        self,
+        uri: str,
+        *,
+        expected_checksum: str | None = None,
+        cache_dir: Path | None = None,
+        migration_id: str | None = None,
+        record_count: int | None = None,
+        batch_id: str | None = None,
+    ) -> tuple[DatasetBatch, Path]:
+        """Fetch a remote file and register it as a data batch.
+
+        Returns
+        -------
+        tuple[DatasetBatch, Path]
+            The recorded batch and the local path to the downloaded file.
+        """
+        from crochet.ingest.remote import RemoteSource, fetch_remote
+
+        source = RemoteSource(uri=uri, expected_checksum=expected_checksum)
+        result = fetch_remote(source, cache_dir=cache_dir)
+
+        bid = batch_id or uuid.uuid4().hex[:12]
+        batch = self._ledger.record_batch(
+            batch_id=bid,
+            migration_id=migration_id,
+            source_file=result.uri,
+            file_checksum=result.checksum,
+            loader_version=self._loader_version,
+            record_count=record_count,
+        )
+        return batch, result.local_path
+
     def verify_file(self, batch: DatasetBatch) -> bool:
         """Check that the source file still matches the recorded checksum."""
         if batch.source_file is None or batch.file_checksum is None:
