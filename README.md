@@ -23,6 +23,25 @@ graph.
 pip install crochet-migration
 ```
 
+With optional data loading support (file parsing, validation):
+
+```bash
+pip install "crochet-migration[data]"
+```
+
+With remote fetching from S3 or GCS:
+
+```bash
+pip install "crochet-migration[s3]"
+pip install "crochet-migration[gcs]"
+```
+
+Install everything:
+
+```bash
+pip install "crochet-migration[all]"
+```
+
 For development:
 
 ```bash
@@ -169,6 +188,8 @@ Rollbacks are explicitly declared, not assumed:
 
 The `MigrationContext` passed to `upgrade()` and `downgrade()` provides:
 
+### Schema Operations
+
 | Operation | Description |
 |-----------|-------------|
 | `add_unique_constraint(label, prop)` | Create a uniqueness constraint |
@@ -183,11 +204,47 @@ The `MigrationContext` passed to `upgrade()` and `downgrade()` provides:
 | `remove_node_property(label, prop)` | Remove a property |
 | `rename_node_property(label, old, new)` | Rename a property |
 | `run_cypher(cypher, params)` | Execute raw Cypher |
+
+### Data Operations
+
+| Operation | Description |
+|-----------|-------------|
 | `begin_batch(batch_id)` | Start a tracked data batch |
 | `create_nodes(label, data)` | Batch-create nodes |
 | `create_relationships(src, tgt, type, data)` | Batch-create relationships |
+| `upsert_nodes(label, data, merge_keys)` | Create or update nodes using MERGE on specified keys |
+| `upsert_relationships(src, tgt, type, data)` | Create or update relationships using MERGE |
 | `delete_nodes_by_batch(label, batch_id)` | Delete nodes by batch |
 | `delete_relationships_by_batch(type, batch_id)` | Delete relationships by batch |
+
+### Bulk Operations
+
+For large datasets, chunked variants process data in configurable batches (default 5,000 rows):
+
+| Operation | Description |
+|-----------|-------------|
+| `bulk_create_nodes(label, data, chunk_size)` | Create nodes in chunked batches |
+| `bulk_upsert_nodes(label, data, merge_keys, chunk_size)` | Upsert nodes in chunked batches |
+| `bulk_create_relationships(src, tgt, type, data, chunk_size)` | Create relationships in chunked batches |
+
+Bulk operations support two batching strategies:
+
+- **Client-side chunking** (default): Sends multiple smaller transactions
+- **Server-side batching**: Uses `CALL {} IN TRANSACTIONS OF N ROWS` (Neo4j 4.4+) when `use_call_in_transactions=True`
+
+```python
+def upgrade(ctx):
+    batch_id = ctx.begin_batch()
+
+    # Upsert nodes — existing nodes matched by merge_keys are updated
+    ctx.upsert_nodes("Person", [
+        {"name": "Alice", "age": 31},
+        {"name": "Bob", "age": 26},
+    ], merge_keys=["name"])
+
+    # Bulk create for large datasets
+    ctx.bulk_create_nodes("Event", large_event_list, chunk_size=10_000)
+```
 
 ## Configuration
 
@@ -213,7 +270,82 @@ Neo4j credentials can be overridden with environment variables:
 - `CROCHET_NEO4J_USERNAME`
 - `CROCHET_NEO4J_PASSWORD`
 
+## Data Ingest
+
+Crochet includes a data ingest pipeline for parsing, validating, and loading external
+data files into migrations. Install the `data` extra for file parsing support.
+
+### File Parsing
+
+Parse CSV, TSV, JSON, JSON Lines, and Parquet files with automatic format and
+compression detection:
+
+```python
+from crochet.ingest.parsers import parse_file, iter_batches
+
+# Parse an entire file into records
+result = parse_file("people.csv")
+print(result.row_count, result.column_names)
+
+# Memory-efficient batch iteration for large files
+for batch in iter_batches("large_dataset.csv.gz", batch_size=10_000):
+    ctx.bulk_create_nodes("Person", batch)
+```
+
+Supported formats: CSV, TSV, JSON, JSONL, Parquet
+
+Transparent compression: gzip, bzip2, zstd, lz4, xz, snappy (auto-detected from
+file extension)
+
+### Data Validation
+
+Validate records against declarative schemas before loading:
+
+```python
+from crochet.ingest.validate import DataSchema, validate
+
+schema = (
+    DataSchema(strict=True, min_rows=1, unique_columns=["email"])
+    .column("name", required=True, dtype="str", min_length=1)
+    .column("email", required=True, pattern=r".+@.+\..+")
+    .column("age", dtype="int", min_value=0, max_value=150)
+)
+
+result = validate(records, schema)
+if not result.is_valid:
+    print(result.summary())
+    result.raise_on_errors()
+```
+
+Column rules support: required fields, type checking, numeric ranges, string
+length constraints, regex patterns, allowed value sets, and custom predicates.
+
+### Remote File Fetching
+
+Fetch data files from HTTP, S3, or GCS with checksum verification and local caching:
+
+```python
+from crochet.ingest.remote import RemoteSource, fetch_remote
+
+source = RemoteSource(
+    uri="https://example.com/data.csv.gz",
+    expected_checksum="abc123...",
+)
+result = fetch_remote(source)
+print(result.local_path, result.checksum)
+```
+
+Features:
+
+- **Protocol registry**: Built-in HTTP/HTTPS, S3 (`s3://`), and GCS (`gs://`)
+  fetchers with support for custom protocols
+- **SHA-256 verification**: Checksum mismatch raises an error
+- **Content-addressable cache**: Files stored by checksum in `.crochet/cache/`
+- **Atomic downloads**: Write to temp file, then rename to prevent partial files
+
 ## CLI Reference
+
+### Core Commands
 
 | Command | Description |
 |---------|-------------|
@@ -223,8 +355,18 @@ Neo4j credentials can be overridden with environment variables:
 | `crochet create-migration DESC` | Create a new migration file |
 | `crochet upgrade` | Apply pending migrations |
 | `crochet downgrade` | Revert the most recent migration |
-| `crochet status` | Show migration status |
+| `crochet status` | Show migration status and data batches |
 | `crochet verify` | Run verification checks |
+
+### Data Commands
+
+| Command | Description |
+|---------|-------------|
+| `crochet load-data PATH` | Parse and preview a data file (CSV/TSV/JSON/Parquet) |
+| `crochet validate-data PATH` | Validate a data file against column rules |
+| `crochet fetch-data URI` | Fetch a remote file with checksum verification |
+| `crochet cache-clear` | Remove all cached remote data files |
+| `crochet cache-verify` | Verify integrity of all cached files |
 
 ## Design Principles
 
