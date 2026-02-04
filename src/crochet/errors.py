@@ -71,5 +71,21 @@ class IngestError(CrochetError):
     """Raised for data ingest issues."""
 
 
+class RemoteFetchError(IngestError):
+    """Raised when a remote file cannot be fetched."""
+
+
+class ChecksumMismatchError(IngestError):
+    """Raised when a downloaded file's checksum doesn't match the expected value."""
+
+    def __init__(self, uri: str, expected: str, actual: str):
+        super().__init__(
+            f"Checksum mismatch for '{uri}': expected {expected}, got {actual}"
+        )
+        self.uri = uri
+        self.expected = expected
+        self.actual = actual
+
+
 class VerificationError(CrochetError):
     """Raised when verification checks fail."""

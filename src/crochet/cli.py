@@ -306,6 +306,120 @@ def verify(ctx: click.Context, with_neo4j: bool) -> None:
 
 
 # ======================================================================
+# fetch-data
+# ======================================================================
+
+
+@main.command("fetch-data")
+@click.argument("uri")
+@click.option("--checksum", default=None, help="Expected SHA-256 checksum of the file.")
+@click.option("--filename", default=None, help="Override the local filename.")
+@click.option("--dest", type=click.Path(), default=None, help="Destination directory.")
+@click.option("--no-cache", is_flag=True, help="Skip the local cache.")
+@click.pass_context
+def fetch_data(
+    ctx: click.Context,
+    uri: str,
+    checksum: str | None,
+    filename: str | None,
+    dest: str | None,
+    no_cache: bool,
+) -> None:
+    """Fetch a remote data file (HTTP/S3/GCS) with checksum verification."""
+    from crochet.ingest.remote import RemoteSource, fetch_remote
+
+    config = _get_config(ctx)
+    cache_dir = config.project_root / ".crochet" / "cache"
+    dest_dir = Path(dest) if dest else None
+
+    source = RemoteSource(uri=uri, expected_checksum=checksum, filename=filename)
+
+    try:
+        result = fetch_remote(
+            source,
+            dest_dir=dest_dir,
+            cache_dir=cache_dir,
+            use_cache=not no_cache,
+        )
+    except CrochetError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    status = "cached" if result.from_cache else "downloaded"
+    click.echo(f"[{status}] {result.uri}")
+    click.echo(f"  path:     {result.local_path}")
+    click.echo(f"  checksum: {result.checksum}")
+    click.echo(f"  size:     {result.size:,} bytes")
+
+
+# ======================================================================
+# cache-clear
+# ======================================================================
+
+
+@main.command("cache-clear")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+@click.pass_context
+def cache_clear(ctx: click.Context, yes: bool) -> None:
+    """Remove all cached remote data files."""
+    from crochet.ingest.remote import FileCache
+
+    config = _get_config(ctx)
+    cache_dir = config.project_root / ".crochet" / "cache"
+
+    cache = FileCache(cache_dir)
+    if not yes:
+        click.confirm(f"Remove all cached files in {cache_dir}?", abort=True)
+
+    count = cache.clear()
+    click.echo(f"Removed {count} cached entry(ies).")
+
+
+# ======================================================================
+# cache-verify
+# ======================================================================
+
+
+@main.command("cache-verify")
+@click.pass_context
+def cache_verify(ctx: click.Context) -> None:
+    """Verify integrity of all cached data files."""
+    from crochet.ingest.batch import compute_file_checksum
+    from crochet.ingest.remote import FileCache
+
+    config = _get_config(ctx)
+    cache_dir = config.project_root / ".crochet" / "cache"
+
+    if not cache_dir.exists():
+        click.echo("No cache directory found.")
+        return
+
+    ok_count = 0
+    bad_count = 0
+
+    for entry_dir in sorted(cache_dir.iterdir()):
+        if not entry_dir.is_dir() or entry_dir.name.startswith("_"):
+            continue
+        expected_checksum = entry_dir.name
+        for fpath in entry_dir.iterdir():
+            if fpath.is_file():
+                actual = compute_file_checksum(fpath)
+                if actual == expected_checksum:
+                    ok_count += 1
+                    click.echo(f"  OK  {fpath.name}  ({expected_checksum[:16]}…)")
+                else:
+                    bad_count += 1
+                    click.echo(
+                        f"  BAD {fpath.name}  "
+                        f"(expected {expected_checksum[:16]}…, "
+                        f"got {actual[:16]}…)"
+                    )
+
+    click.echo(f"\n{ok_count} OK, {bad_count} corrupted.")
+    if bad_count:
+        raise SystemExit(1)
+
+
+# ======================================================================
 # Helpers
 # ======================================================================
 
