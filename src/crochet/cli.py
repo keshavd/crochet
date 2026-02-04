@@ -306,6 +306,116 @@ def verify(ctx: click.Context, with_neo4j: bool) -> None:
 
 
 # ======================================================================
+# load-data
+# ======================================================================
+
+
+@main.command("load-data")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--format", "fmt", default=None, help="File format (csv, tsv, json, jsonl, parquet).")
+@click.option("--validate-only", is_flag=True, help="Only validate, don't show records.")
+@click.option("--head", "head_n", type=int, default=5, help="Number of records to preview.")
+@click.pass_context
+def load_data(
+    ctx: click.Context,
+    path: str,
+    fmt: str | None,
+    validate_only: bool,
+    head_n: int,
+) -> None:
+    """Parse and preview a data file (CSV/TSV/JSON/Parquet).
+
+    Use this to inspect a data file before writing a migration that loads it.
+    Supports gzip, bzip2, zstd, xz, and lz4 compression transparently.
+    """
+    try:
+        from crochet.ingest.parsers import parse_file
+    except ImportError as exc:
+        raise click.ClickException(
+            "pyarrow is required for file parsing.  "
+            "Install it with: pip install 'crochet-migration[data]'"
+        ) from exc
+
+    file_path = Path(path)
+
+    try:
+        result = parse_file(file_path, fmt=fmt)
+    except (ValueError, Exception) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Format:      {result.format.value}")
+    if result.compression:
+        click.echo(f"Compression: {result.compression}")
+    click.echo(f"Rows:        {result.row_count:,}")
+    click.echo(f"Columns:     {', '.join(result.column_names)}")
+
+    if not validate_only and result.records:
+        click.echo(f"\nFirst {min(head_n, len(result.records))} records:")
+        for i, rec in enumerate(result.records[:head_n]):
+            click.echo(f"  [{i}] {rec}")
+
+
+# ======================================================================
+# validate-data
+# ======================================================================
+
+
+@main.command("validate-data")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--format", "fmt", default=None, help="File format override.")
+@click.option("--require", multiple=True, help="Column that must be non-null (repeatable).")
+@click.option("--unique", multiple=True, help="Column that must be unique (repeatable).")
+@click.option("--min-rows", type=int, default=None, help="Minimum row count.")
+@click.option("--max-rows", type=int, default=None, help="Maximum row count.")
+@click.option("--strict", is_flag=True, help="Warn on unexpected columns.")
+@click.pass_context
+def validate_data_cmd(
+    ctx: click.Context,
+    path: str,
+    fmt: str | None,
+    require: tuple[str, ...],
+    unique: tuple[str, ...],
+    min_rows: int | None,
+    max_rows: int | None,
+    strict: bool,
+) -> None:
+    """Validate a data file against column rules.
+
+    Quick validation without writing Python.  For complex schemas, use the
+    ``DataSchema`` API in your migration code.
+    """
+    try:
+        from crochet.ingest.parsers import parse_file
+        from crochet.ingest.validate import DataSchema, validate
+    except ImportError as exc:
+        raise click.ClickException(
+            "pyarrow is required for file parsing.  "
+            "Install it with: pip install 'crochet-migration[data]'"
+        ) from exc
+
+    file_path = Path(path)
+
+    try:
+        parsed = parse_file(file_path, fmt=fmt)
+    except (ValueError, Exception) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    schema = DataSchema(
+        strict=strict,
+        min_rows=min_rows,
+        max_rows=max_rows,
+        unique_columns=list(unique),
+    )
+    for col_name in require:
+        schema.column(col_name, required=True)
+
+    result = validate(parsed.records, schema)
+    click.echo(result.summary())
+    if not result.is_valid:
+        raise SystemExit(1)
+
+
+# ======================================================================
 # fetch-data
 # ======================================================================
 

@@ -87,5 +87,17 @@ class ChecksumMismatchError(IngestError):
         self.actual = actual
 
 
+class ValidationError(IngestError):
+    """Raised when data validation fails."""
+
+    def __init__(self, result: object):
+        self.result = result
+        errors = getattr(result, "errors", [])
+        count = len(errors)
+        first_few = "; ".join(str(e) for e in errors[:3])
+        suffix = f" (and {count - 3} more)" if count > 3 else ""
+        super().__init__(f"Validation failed with {count} error(s): {first_few}{suffix}")
+
+
 class VerificationError(CrochetError):
     """Raised when verification checks fail."""
