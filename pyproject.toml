@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "crochet-migration"
-version = "0.1.0"
+version = "0.1.1"
 description = "Versioned schema & data migrations for neomodel Neo4j graphs"
 readme = "README.md"
 requires-python = ">=3.10"
