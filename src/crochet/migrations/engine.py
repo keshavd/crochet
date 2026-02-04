@@ -153,6 +153,7 @@ class MigrationEngine:
         # Compute schema hash and diff
         schema_hash = ""
         diff_summary = ""
+        diff_obj = None
         if current_snapshot is not None:
             current_snapshot = hash_snapshot(current_snapshot)
             schema_hash = current_snapshot.schema_hash
@@ -166,9 +167,9 @@ class MigrationEngine:
                 prev_json = self._ledger.get_snapshot(prev_hash)
                 if prev_json:
                     prev_snapshot = SchemaSnapshot.from_json(prev_json)
-                    diff = diff_snapshots(prev_snapshot, current_snapshot)
-                    if diff.has_changes:
-                        diff_summary = diff.summary()
+                    diff_obj = diff_snapshots(prev_snapshot, current_snapshot)
+                    if diff_obj.has_changes:
+                        diff_summary = diff_obj.summary()
 
         content = render_migration(
             revision_id=revision_id,
@@ -177,6 +178,7 @@ class MigrationEngine:
             schema_hash=schema_hash,
             rollback_safe=rollback_safe,
             diff_summary=diff_summary,
+            diff=diff_obj,
         )
 
         return write_migration_file(

@@ -60,6 +60,42 @@ class TestTemplate:
         assert "Detected schema changes" in content
         assert "Person" in content
 
+    def test_render_with_operations(self):
+        from crochet.ir.diff import SchemaDiff, NodeChange, PropertyChange
+        from crochet.ir.schema import NodeIR, PropertyIR
+        
+        # Mock a diff where a property is added and another is removed
+        prop_added = PropertyIR(name="email", property_type="StringProperty", unique_index=True)
+        prop_removed = PropertyIR(name="age", property_type="IntegerProperty")
+        
+        pc_added = PropertyChange(kind="added", property_name="email", new=prop_added)
+        pc_removed = PropertyChange(kind="removed", property_name="age", old=prop_removed)
+        
+        node_old = NodeIR(kgid="p1", label="Person", class_name="Person", module_path="m", properties=(prop_removed,))
+        node_new = NodeIR(kgid="p1", label="Person", class_name="Person", module_path="m", properties=(prop_added,))
+        
+        nc = NodeChange(kind="modified", kgid="p1", old=node_old, new=node_new, property_changes=[pc_added, pc_removed])
+        diff = SchemaDiff(node_changes=[nc])
+        
+        content = render_migration(
+            revision_id="0002_update_person",
+            parent_id="0001_init",
+            description="Update Person",
+            schema_hash="def456",
+            diff_summary=diff.summary(),
+            diff=diff
+        )
+        
+        # Verify upgrade contains operations
+        assert 'ctx.add_node_property("Person", "email")' in content
+        assert 'ctx.add_unique_constraint("Person", "email")' in content
+        assert 'ctx.remove_node_property("Person", "age")' in content
+        
+        # Verify downgrade contains inverse operations
+        assert 'ctx.remove_node_property("Person", "email")' in content
+        assert 'ctx.drop_unique_constraint("Person", "email")' in content
+        assert 'ctx.add_node_property("Person", "age")' in content
+
     def test_write_migration_file(self, tmp_path):
         mig_dir = tmp_path / "migrations"
         path = write_migration_file(mig_dir, "0001_init", "# test\n")
